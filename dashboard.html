@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Farmer Advisory</title>
+<style>
+  :root { --g:#2e7d32; --g2:#e8f5e9; --bg:#f6f8f4; --ink:#1b2a1b; --mut:#5f6f5f; --warn:#b26a00; --warnbg:#fff4e0; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, Arial, sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:var(--g); color:#fff; padding:18px 24px; }
+  header h1 { margin:0; font-size:22px; }
+  header p { margin:4px 0 0; opacity:.9; font-size:14px; }
+  main { max-width:960px; margin:0 auto; padding:20px; display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); }
+  .card { background:#fff; border-radius:12px; padding:18px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+  .card.wide { grid-column:1/-1; }
+  h2 { margin:0 0 12px; font-size:16px; color:var(--g); }
+  .big { font-size:40px; font-weight:700; }
+  .row { display:flex; gap:20px; flex-wrap:wrap; color:var(--mut); font-size:14px; margin-top:8px; }
+  .tip { background:var(--warnbg); color:var(--warn); border-left:4px solid var(--warn); padding:10px 12px; border-radius:6px; margin-bottom:8px; font-size:14px; }
+  .none { color:var(--mut); font-size:14px; }
+  button { background:var(--g); color:#fff; border:0; padding:10px 18px; border-radius:8px; font-size:14px; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:default; }
+  #msg { margin-top:10px; font-size:14px; color:var(--mut); }
+  svg { width:100%; height:auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Smart Farmer Advisory Platform</h1>
+  <p id="who">Loading...</p>
+</header>
+<main>
+  <div class="card">
+    <h2>Weather</h2>
+    <div class="big" id="temp">--</div>
+    <div id="desc" class="none"></div>
+    <div class="row"><span id="hum"></span><span id="rain"></span></div>
+  </div>
+  <div class="card">
+    <h2>Market price trend</h2>
+    <div class="big" id="drop">--</div>
+    <div class="none">change over the recorded period (Wheat, Pune)</div>
+  </div>
+  <div class="card wide">
+    <h2>Wheat price per quintal (Rs.)</h2>
+    <div id="chart"></div>
+  </div>
+  <div class="card wide">
+    <h2>Advisory for you</h2>
+    <div id="tips"></div>
+    <button id="btn" onclick="sendAlert()">Send me this advisory (SNS)</button>
+    <div id="msg"></div>
+  </div>
+</main>
+<script>
+async function load() {
+  try {
+    const a = await (await fetch('/api/advisory/1')).json();
+    document.getElementById('who').textContent = 'Welcome, ' + a.farmer;
+    document.getElementById('temp').textContent = a.weather.temp + ' C';
+    document.getElementById('desc').textContent = a.weather.desc;
+    document.getElementById('hum').textContent = 'Humidity: ' + a.weather.humidity + '%';
+    document.getElementById('rain').textContent = 'Rain: ' + a.weather.rain + ' mm';
+    const d = a.price_drop_pct;
+    document.getElementById('drop').textContent = (d > 0 ? '-' : '+') + Math.abs(d) + '%';
+    document.getElementById('drop').style.color = d > 0 ? '#b3261e' : '#2e7d32';
+    const t = document.getElementById('tips');
+    t.innerHTML = '';
+    if (a.advisory.length === 0) { t.innerHTML = '<p class="none">No alerts right now. Conditions look normal.</p>'; }
+    a.advisory.forEach(x => { const e = document.createElement('div'); e.className = 'tip'; e.textContent = x; t.appendChild(e); });
+    const p = await (await fetch('/api/prices/Wheat')).json();
+    drawChart(p);
+  } catch (e) {
+    document.getElementById('who').textContent = 'Could not load data. Is the server running?';
+  }
+}
+function drawChart(p) {
+  if (!p.length) return;
+  const W = 600, H = 220, pad = 40;
+  const vals = p.map(r => r.price_per_quintal);
+  const min = Math.min(...vals) - 50, max = Math.max(...vals) + 50;
+  const x = i => pad + (p.length === 1 ? 0 : i * (W - 2 * pad) / (p.length - 1));
+  const y = v => H - pad - (v - min) / (max - min) * (H - 2 * pad);
+  let pts = p.map((r, i) => x(i) + ',' + y(r.price_per_quintal)).join(' ');
+  let s = '<svg viewBox="0 0 ' + W + ' ' + H + '">';
+  s += '<line x1="' + pad + '" y1="' + (H - pad) + '" x2="' + (W - pad) + '" y2="' + (H - pad) + '" stroke="#ccc"/>';
+  s += '<polyline fill="none" stroke="#2e7d32" stroke-width="3" points="' + pts + '"/>';
+  p.forEach((r, i) => {
+    s += '<circle cx="' + x(i) + '" cy="' + y(r.price_per_quintal) + '" r="5" fill="#2e7d32"/>';
+    s += '<text x="' + x(i) + '" y="' + (y(r.price_per_quintal) - 10) + '" font-size="13" text-anchor="middle">' + r.price_per_quintal + '</text>';
+    s += '<text x="' + x(i) + '" y="' + (H - 15) + '" font-size="12" text-anchor="middle" fill="#666">' + r.price_date.slice(5) + '</text>';
+  });
+  document.getElementById('chart').innerHTML = s + '</svg>';
+}
+async function sendAlert() {
+  const b = document.getElementById('btn'), m = document.getElementById('msg');
+  b.disabled = true; m.textContent = 'Sending...';
+  try {
+    const r = await (await fetch('/api/send-alerts')).json();
+    m.textContent = r.sent.length ? 'Alert sent. Check your email.' : 'No alert needed right now.';
+  } catch (e) { m.textContent = 'Failed to send alert.'; }
+  b.disabled = false;
+}
+load();
+</script>
+</body>
+</html>
